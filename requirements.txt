@@ -1,0 +1,19 @@
+# TriageDesk dependencies. Versions are filled in by `pip freeze` after a clean
+# install (dependency drift is the #1 cause of these projects breaking). The set
+# is deliberately small — no HTTP/search libraries, because unlike NewsGenie this
+# system talks only to an LLM and a local SQLite DB.
+
+# --- LangGraph workflow + Claude ---
+langgraph==1.2.5
+langchain-core==1.4.7
+langchain-anthropic==1.4.6
+
+# --- structured output / validation ---
+pydantic==2.13.4
+
+# --- UI + config ---
+streamlit==1.58.0
+python-dotenv==1.2.2
+
+# --- tests ---
+pytest==9.1.0
