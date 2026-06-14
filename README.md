@@ -83,7 +83,7 @@ routes to **escalate** — a human — instead of being forced down a happy path
 | `evaluation.py` | Classification metrics + LLM-as-judge empathy/clarity scoring. |
 | `seed_data.py` | Sample tickets + the labeled evaluation set. |
 | `app.py` | Streamlit dashboard: login, triage (+ auto-scroll), tickets/lifecycle, debug. |
-| `tests/` | 71 tests — DB, handlers, routing, auth, lifecycle, responder, RAG, eval — no API key needed. |
+| `tests/` | 85 tests — DB, handlers, routing, auth, lifecycle, responder, RAG, eval, integration — no API key needed. |
 
 ## Run it
 
@@ -104,7 +104,7 @@ scenario buttons to exercise each route, including the RAG general-question path
 ## Verify
 
 ```bash
-.venv/bin/python -m pytest          # 71 tests, no API key needed
+.venv/bin/python -m pytest          # 85 tests, no API key needed
 .venv/bin/python evaluation.py      # live: classification metrics + LLM-as-judge quality
 ```
 
