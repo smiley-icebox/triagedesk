@@ -18,6 +18,7 @@ Two correctness fixes over the original live here:
 import os
 import sqlite3
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from secrets import randbelow
 
@@ -82,12 +83,30 @@ class SQLiteRepository(TicketRepository):
 
     # -- connection + schema --------------------------------------------------
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path)
+        conn = sqlite3.connect(self._path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        # WAL lets readers and a writer proceed concurrently (default rollback mode
+        # blocks readers during a write); busy_timeout makes a contended call WAIT
+        # up to 5s instead of immediately raising "database is locked".
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
+    @contextmanager
+    def _tx(self):
+        """A connection scoped to one operation: commits on success, rolls back on
+        error (via `with conn`), and ALWAYS closes (the plain `with conn` idiom
+        commits but leaks the connection/fd — a real problem under Streamlit's
+        across-thread reruns)."""
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _ensure_schema(self) -> None:
-        with self._connect() as conn:
+        with self._tx() as conn:
             migrations.migrate(conn)
 
     @staticmethod
@@ -106,7 +125,7 @@ class SQLiteRepository(TicketRepository):
         for _ in range(self._MAX_ID_ATTEMPTS):
             ticket_id = self._new_candidate_id()
             try:
-                with self._connect() as conn:
+                with self._tx() as conn:
                     conn.execute(
                         """INSERT INTO support_tickets
                            (ticket_id, customer_id, customer_name, issue, status,
@@ -132,6 +151,15 @@ class SQLiteRepository(TicketRepository):
                 if "unique constraint" in msg and "ticket_id" in msg:
                     continue
                 return None
+            except sqlite3.OperationalError as exc:
+                # Transient lock contention ("database is locked"/"busy") — retry
+                # rather than silently dropping a customer's complaint. busy_timeout
+                # already waited; a fresh attempt usually wins. Other operational
+                # errors fail fast.
+                msg = str(exc).lower()
+                if "locked" in msg or "busy" in msg:
+                    continue
+                return None
             except Exception:
                 return None
         return None  # couldn't allocate a free id (table effectively full)
@@ -140,7 +168,7 @@ class SQLiteRepository(TicketRepository):
         if new_status not in TICKET_STATUSES:
             return False
         try:
-            with self._connect() as conn:
+            with self._tx() as conn:
                 # Scope to the owning customer: a status change for a ticket that
                 # isn't theirs returns False (same as not-found), never mutates it.
                 row = conn.execute(
@@ -175,7 +203,7 @@ class SQLiteRepository(TicketRepository):
 
     def load_tickets(self, rows):
         ts = _now()
-        with self._connect() as conn:
+        with self._tx() as conn:
             for r in rows:
                 if r["status"] not in TICKET_STATUSES:
                     raise ValueError(f"invalid seed status: {r['status']!r}")
@@ -191,7 +219,7 @@ class SQLiteRepository(TicketRepository):
     # -- reads ----------------------------------------------------------------
     def get_ticket(self, ticket_id, customer_id=None):
         try:
-            with self._connect() as conn:
+            with self._tx() as conn:
                 if customer_id is not None:
                     row = conn.execute(
                         "SELECT * FROM support_tickets WHERE ticket_id = ? AND customer_id = ?",
@@ -207,7 +235,7 @@ class SQLiteRepository(TicketRepository):
 
     def list_tickets(self, customer_id=None, limit=50):
         try:
-            with self._connect() as conn:
+            with self._tx() as conn:
                 if customer_id is not None:
                     rows = conn.execute(
                         "SELECT * FROM support_tickets WHERE customer_id = ? "
@@ -225,7 +253,7 @@ class SQLiteRepository(TicketRepository):
 
     def get_events(self, ticket_id, customer_id):
         try:
-            with self._connect() as conn:
+            with self._tx() as conn:
                 # Ownership check first — the audit trail (actor identities, note
                 # text) must not leak across customers. Not yours => empty.
                 owner = conn.execute(
@@ -246,7 +274,7 @@ class SQLiteRepository(TicketRepository):
         """Flag unresolved tickets whose SLA deadline has passed. Returns count newly
         breached. This is the job a scheduler would run every few minutes."""
         try:
-            with self._connect() as conn:
+            with self._tx() as conn:
                 cur = conn.execute(
                     """UPDATE support_tickets SET sla_breached = 1
                        WHERE status != ? AND sla_breached = 0

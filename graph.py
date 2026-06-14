@@ -3,11 +3,11 @@
 Shape:
 
     START -> classify -> (route_by_label) -> one of: positive / negative / query
-                                                      / escalate -> END
+                                                      / general / escalate -> END
 
-This is the teaching contrast with NewsGenie. NewsGenie used `tools_condition`, so
-the LLM itself decided what to call inside a loop (NewsGenie/graph.py:66) — an
-agent. Here:
+This is the deliberate contrast with the *agent* pattern. A typical LangGraph agent
+binds tools and uses `tools_condition`, letting the LLM decide what to call inside a
+loop — the model drives control flow. Here we do the opposite:
 
   - `classify` makes the one LLM call and writes {label, confidence, route} to state.
   - `route_by_label` is a PLAIN FUNCTION that reads state["route"] and returns the

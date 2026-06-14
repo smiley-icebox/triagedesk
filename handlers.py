@@ -24,19 +24,19 @@ from config import (
     TEMPLATE_QUERY_NOT_FOUND,
 )
 
-# 6-digit ticket numbers are the scheme (config/db). Prefer an exact 6-digit token;
-# fall back to any 4+ digit run so a customer who mistypes still gets a useful
-# "we couldn't find that" rather than "you gave no number".
+# Ticket numbers are exactly 6 digits (config/db). Match ONLY that — a 4-digit
+# year or a dollar amount ("charged 2023", "$4500") is not a ticket number, so we
+# don't turn it into a bogus "we couldn't find ticket #2023"; the no-id path asks
+# the customer for the 6-digit number instead.
 _TICKET_RE_6 = re.compile(r"\b(\d{6})\b")
-_TICKET_RE_ANY = re.compile(r"\b(\d{4,8})\b")
 
 
 def extract_ticket_id(message: str) -> str | None:
-    """Pull a ticket number out of free text, or None if there isn't one.
+    """Pull a 6-digit ticket number out of free text, or None if there isn't one.
 
     Pure string work — kept separate from the handler so it's trivially testable.
     """
-    m = _TICKET_RE_6.search(message) or _TICKET_RE_ANY.search(message)
+    m = _TICKET_RE_6.search(message)
     return m.group(1) if m else None
 
 

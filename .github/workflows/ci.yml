@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        # The suite is fully offline — no ANTHROPIC_API_KEY needed (the LLM sits
+        # behind injectable seams), so CI runs the whole thing deterministically.
+        run: python -m pytest -q

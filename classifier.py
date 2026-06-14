@@ -75,14 +75,17 @@ class ClassificationResult:
 # conversation history — see graph.classify_node), so a quoted prior turn can't
 # trip it.
 _INJECTION_PATTERNS = [
-    r"ignore (all |the |your )?(previous |prior |above )?instructions",
-    r"disregard (all |the |your )?(previous |prior |above )",
-    r"you are now",
-    r"new instructions:",
-    r"system prompt",
+    # Instruction-override phrasings — strong, specific signals. The generic
+    # "act as a/an/the" and bare "you are now" were dropped: they false-fire on real
+    # banking language ("act as the executor on my mother's account"). "forget
+    # everything above" is included to catch a common rephrasing.
+    r"ignore (all |the |your |any )?(previous |prior |above )?(instructions|prompts?)",
+    r"disregard (all |the |your |any )?(previous |prior |above )?(instructions|prompts?)",
+    r"forget (everything|all)\s+(above|previous|prior)",
+    r"new instructions\s*:",
+    r"\bsystem prompt\b",
     r"\bsystem\s*:",
     r"\bassistant\s*:",
-    r"act as (a|an|the)\b",
 ]
 _INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE)
 
@@ -94,12 +97,17 @@ def detect_injection(message: str) -> bool:
 
 
 # --- Deterministic keyword fallback -----------------------------------------
-_POSITIVE_WORDS = ("thank", "thanks", "appreciate", "great", "excellent", "awesome",
-                   "kudos", "happy", "love", "fantastic", "well done", "perfect")
-_NEGATIVE_WORDS = ("not ", "n't", "never", "still", "broken", "crash", "fail", "error",
-                   "frustrat", "unacceptable", "angry", "wrong", "locked", "delay",
-                   "missing", "problem", "issue", "complaint", "charged twice")
-_QUERY_WORDS = ("status", "update on", "where is", "where's", "any update", "ticket")
+# All word lists are WORD-BOUNDARY matched (not substring), so e.g. "still" doesn't
+# fire inside "distillery" and "issue" doesn't fire inside "tissue". The "n't"
+# contraction is matched as a substring on purpose (it's a suffix: don't/hasn't/isn't).
+_POS_RE = re.compile(
+    r"\b(thanks?|appreciate|great|excellent|awesome|kudos|happy|love|fantastic|"
+    r"well done|perfect)\b", re.IGNORECASE)
+_NEG_RE = re.compile(
+    r"n't|\b(not|never|still|broken|crash|fail|error|frustrat\w*|unacceptable|angry|"
+    r"wrong|locked|delay|missing|problem|issue|complaint|charged twice)\b", re.IGNORECASE)
+_QUERY_RE = re.compile(
+    r"\b(status|update on|where is|where's|any update|ticket)\b", re.IGNORECASE)
 _NUM_RE = re.compile(r"\b\d{4,8}\b")
 # Word-boundary matched, so "rate" doesn't fire inside "frustrated", etc.
 _GENERAL_RE = re.compile(
@@ -120,11 +128,11 @@ def _heuristic_classify(message: str) -> ClassificationResult:
         not a silent status QUERY.
     Unclear input gets low confidence so it ESCALATES rather than guessing."""
     m = (message or "").lower()
-    if any(w in m for w in _POSITIVE_WORDS):
+    if _POS_RE.search(m):
         return ClassificationResult(LABEL_POSITIVE, 0.7, "heuristic")
-    if any(w in m for w in _NEGATIVE_WORDS):
+    if _NEG_RE.search(m):
         return ClassificationResult(LABEL_NEGATIVE, 0.7, "heuristic")
-    if any(w in m for w in _QUERY_WORDS) or _NUM_RE.search(m):
+    if _QUERY_RE.search(m) or _NUM_RE.search(m):
         return ClassificationResult(LABEL_QUERY, 0.7, "heuristic")
     if _GENERAL_RE.search(m):
         return ClassificationResult(LABEL_GENERAL, 0.7, "heuristic")

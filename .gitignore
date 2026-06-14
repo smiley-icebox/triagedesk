@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 support.db
+support.db-wal
+support.db-shm
 logs/
 *.zip
 .DS_Store

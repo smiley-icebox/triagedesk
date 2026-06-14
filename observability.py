@@ -11,9 +11,11 @@ queryable and aggregatable. "What was the routing success rate?" and "what's the
 p50 latency?" are one-liners over JSONL, but archaeology over prose logs. Same
 principle as the structured classifier output — make the data a shape, not text.
 
-WHAT IS DELIBERATELY NOT logged: in a real bank you would redact PII before it ever
-hits a log. We keep the raw message here because it's synthetic demo data; the
-writeup flags PII redaction as a required production addition.
+PII: the message is run through redact() before it's written (best-effort masking of
+emails, SSNs, phone numbers, and card/account-length numbers — see redact() below).
+This is masking-at-the-log-boundary, not a full DLP pipeline, and it does NOT cover
+PII stored elsewhere (e.g. a complaint's raw text in support_tickets) — the writeup
+flags storage-layer redaction + encryption-at-rest as production work.
 """
 
 import json
@@ -38,7 +40,7 @@ _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 _CARD_GROUPS_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")   # 13-19 digit card/account groups
-_LONG_NUM_RE = re.compile(r"\b\d{9,}\b")                    # any 9+ digit run
+_LONG_NUM_RE = re.compile(r"\b\d{7,}\b")                    # 7+ digit run (account numbers); 6-digit ticket ids preserved
 
 
 def redact(text: str) -> str:
@@ -98,10 +100,20 @@ def read_recent(limit: int = 50) -> list[dict]:
     try:
         with open(TRACE_PATH, encoding="utf-8") as f:
             lines = f.readlines()
-        records = [json.loads(line) for line in lines if line.strip()]
-        return list(reversed(records))[:limit]
     except Exception:
         return []
+    # Parse per line: a single corrupt/partial line (e.g. an interleaved concurrent
+    # append) must not zero out the entire trace history — skip it and keep the rest.
+    records = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    return list(reversed(records))[:limit]
 
 
 def _percentile(values: list[float], pct: float) -> float:

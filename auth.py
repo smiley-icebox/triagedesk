@@ -30,18 +30,25 @@ def _hash_password(password: str, salt: bytes) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS).hex()
 
 
+ROLE_CUSTOMER = "customer"
+ROLE_AGENT = "agent"
+
+
 @dataclass(frozen=True)
 class _User:
     customer_id: str
     name: str
+    role: str
     salt: bytes
     pw_hash: str
 
 
 @dataclass(frozen=True)
 class Session:
-    """A verified login. customer_id here is TRUSTED — derived from authentication,
-    not from client input. This is what handlers scope their reads to.
+    """A verified login. customer_id and role here are TRUSTED — derived from
+    authentication, not from client input. customer_id scopes data reads; role gates
+    privileged actions (only an agent can drive a ticket's lifecycle, and the audit
+    trail records who really acted).
 
     `issued_at` (UTC ISO-8601) is stamped at login so an idle/absolute-timeout check
     can be added later. PRODUCTION GAPS (out of scope for this demo, but required for
@@ -52,7 +59,12 @@ class Session:
     customer_id: str
     customer_name: str
     username: str
+    role: str = ROLE_CUSTOMER
     issued_at: str = ""
+
+    @property
+    def is_agent(self) -> bool:
+        return self.role == ROLE_AGENT
 
     def is_expired(self, max_idle_seconds: int) -> bool:
         """Hook for session expiry (not enforced in the demo). True if older than
@@ -66,18 +78,21 @@ class Session:
             return False
 
 
-def _seed_user(username: str, password: str, customer_id: str, name: str) -> tuple[str, _User]:
+def _seed_user(username: str, password: str, customer_id: str, name: str,
+               role: str = ROLE_CUSTOMER) -> tuple[str, _User]:
     # Demo-only: hash a known password at import. A real system stores the hash
     # produced at registration and never sees the plaintext here.
     salt = os.urandom(16)
-    return username, _User(customer_id, name, salt, _hash_password(password, salt))
+    return username, _User(customer_id, name, role, salt, _hash_password(password, salt))
 
 
 # Demo directory. Passwords are documented in the README as demo credentials.
+# jordan/sam are customers; agent is a support agent (can drive ticket lifecycle).
 _USERS: dict[str, _User] = dict(
     [
         _seed_user("jordan", "demo123", "cust_1001", "Jordan"),
         _seed_user("sam", "demo123", "cust_2002", "Sam"),
+        _seed_user("agent", "demo123", "agent_9001", "Alex (Support)", role=ROLE_AGENT),
     ]
 )
 
@@ -99,7 +114,7 @@ def authenticate(username: str, password: str) -> Session | None:
         return None
     return Session(
         customer_id=user.customer_id, customer_name=user.name,
-        username=username.strip().lower(),
+        username=username.strip().lower(), role=user.role,
         issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 

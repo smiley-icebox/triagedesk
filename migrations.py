@@ -15,6 +15,8 @@ Postgres once a PostgresRepository is wired in — the whole point of the reposi
 seam in repository.py.
 """
 
+import sqlite3
+
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (
         1,
@@ -80,13 +82,25 @@ def migrate(conn) -> int:
 
     Takes an open connection (not a path) so the repository owns connection
     lifecycle and so this works against any DB-API-compatible engine.
+
+    CRASH-SAFE: each statement is applied idempotently — if a prior partial apply
+    already made the change (SQLite auto-commits DDL, so a crash between an
+    ALTER and the version bump is possible), the "duplicate column"/"already
+    exists" error is swallowed and we move on, instead of bricking every future
+    boot. The version is recorded only after all of a migration's statements land.
     """
     current = _current_version(conn)
     for version, statements in MIGRATIONS:
         if version <= current:
             continue
         for sql in statements:
-            conn.execute(sql)
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError as exc:
+                m = str(exc).lower()
+                if "duplicate column" in m or "already exists" in m:
+                    continue  # this step was applied by an earlier interrupted run
+                raise
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
         current = version
     conn.commit()

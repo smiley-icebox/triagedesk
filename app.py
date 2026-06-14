@@ -8,7 +8,8 @@ scenarios; debug/logs with traces and success/failure aggregates) — and the
 production additions: a real login (identity from an authenticated session, not a
 text box), and a ticket lifecycle / audit view on the Tickets tab.
 
-UI patterns (cache_resource, session_state, graceful errors) follow NewsGenie/app.py.
+UI patterns: cache_resource for the shared graph, session_state for auth/history,
+graceful per-turn error handling (standard Streamlit).
 """
 
 import os
@@ -160,8 +161,10 @@ if st.session_state.session is None:
             st.session_state.session = sess
             st.session_state.history = []
             st.rerun()
-    st.info("Demo credentials — **jordan** / `demo123` (owns the sample tickets) or "
-            "**sam** / `demo123` (owns ticket 940011, to demonstrate read-scoping).")
+    st.info("Demo credentials (all password `demo123`):\n"
+            "- **jordan** — customer, owns the sample tickets\n"
+            "- **sam** — customer, owns ticket 940011 (shows read-scoping)\n"
+            "- **agent** — support agent, sees all tickets + can drive their lifecycle")
     st.stop()
 
 session = st.session_state.session
@@ -183,11 +186,11 @@ with st.sidebar:
                "orchestrated as LangGraph nodes")
 
     st.subheader("Signed in")
-    st.write(f"**{session.customer_name}**  ·  `{session.customer_id}`")
+    st.write(f"**{session.customer_name}**  ·  `{session.customer_id}`  ·  _{session.role}_")
     st.caption(
-        "Identity comes from your authenticated session — lookups are scoped to "
-        "your own tickets. Ticket 940011 belongs to a different customer; querying "
-        "it shows read-scoping in action."
+        "Identity (and role) come from your authenticated session — never client input. "
+        "Lookups are scoped to your own tickets; the agent role gates ticket-lifecycle "
+        "actions. Query ticket 940011 (another customer's) to see read-scoping."
     )
     if st.button("Sign out", use_container_width=True):
         st.session_state.session = None
@@ -299,51 +302,58 @@ with tab_triage:
     # to the newest message. Runs every render, even with an empty chat.
     _fit_and_scroll()
 
-# === Tickets tab (also the agent console: status lifecycle + audit) =========
+# === Tickets tab ============================================================
+# Role-gated: an AGENT sees every ticket and can drive its lifecycle (the audit
+# trail records "agent:<name>"); a CUSTOMER sees only their own tickets, read-only —
+# they can't change status, clear an SLA breach, or be logged as an agent.
 with tab_tickets:
-    st.caption(
-        f"Tickets for **{session.customer_name}** (`{session.customer_id}`). "
-        "Each can be moved through its lifecycle; every change is audited."
-    )
-    if st.button("⏱ Run SLA check"):
-        n = db.mark_overdue_sla()
-        st.toast(f"SLA check: {n} ticket(s) newly breached.")
-        st.rerun()
+    if session.is_agent:
+        st.caption("**Agent console** — all tickets. Status changes are audited as "
+                   f"`agent:{session.username}`.")
+        if st.button("⏱ Run SLA check"):
+            n = db.mark_overdue_sla()
+            st.toast(f"SLA check: {n} ticket(s) newly breached.")
+            st.rerun()
+        tickets = db.list_tickets()  # agent: all customers
+    else:
+        st.caption(f"Your tickets, **{session.customer_name}** — read-only. "
+                   "Our support team manages status.")
+        tickets = db.list_tickets(customer_id=session.customer_id)  # customer: own only
 
-    tickets = db.list_tickets(customer_id=session.customer_id)
     if not tickets:
-        st.info("No tickets yet. Send a negative-feedback message to open one.")
+        st.info("No tickets yet." + ("" if session.is_agent
+                else " Send a negative-feedback message to open one."))
     for t in tickets:
         breach = " · ⚠️ SLA BREACHED" if t.get("sla_breached") else ""
+        owner = t["customer_id"]
         with st.expander(f"#{t['ticket_id']} · {t['status']} · {t['issue']}{breach}"):
             st.write(f"**Opened:** {t['created_at']}  ·  **Last update:** {t['updated_at']}")
+            if session.is_agent:
+                st.write(f"**Customer:** `{owner}`")
             if t.get("sla_due_at"):
                 flag = "⚠️ breached" if t.get("sla_breached") else "on track"
                 st.write(f"**SLA due:** {t['sla_due_at']}  ·  {flag}  ·  priority: {t.get('priority','normal')}")
 
-            # Lifecycle control (this is the support-agent action). actor is
-            # recorded in the audit trail.
-            cols = st.columns([3, 1])
-            # Guard against a status not in the known set (legacy/imported row, or a
-            # future migration) — default the selector to index 0 instead of crashing.
-            cur_status = t["status"]
-            sel_index = TICKET_STATUSES.index(cur_status) if cur_status in TICKET_STATUSES else 0
-            new_status = cols[0].selectbox(
-                "Set status", TICKET_STATUSES,
-                index=sel_index,
-                key=f"sel_{t['ticket_id']}",
-            )
-            if cols[1].button("Update", key=f"upd_{t['ticket_id']}"):
-                ok = db.update_status(
-                    t["ticket_id"], new_status,
-                    actor=f"agent:{session.username}",
-                    customer_id=session.customer_id,
-                    note="changed via dashboard",
+            # Lifecycle control — AGENTS ONLY. The status update is scoped to the
+            # ticket's owner, and the audit records the acting agent.
+            if session.is_agent:
+                cols = st.columns([3, 1])
+                cur_status = t["status"]
+                sel_index = TICKET_STATUSES.index(cur_status) if cur_status in TICKET_STATUSES else 0
+                new_status = cols[0].selectbox(
+                    "Set status", TICKET_STATUSES, index=sel_index, key=f"sel_{t['ticket_id']}",
                 )
-                st.toast("Status updated." if ok else "No change.")
-                st.rerun()
+                if cols[1].button("Update", key=f"upd_{t['ticket_id']}"):
+                    ok = db.update_status(
+                        t["ticket_id"], new_status,
+                        actor=f"agent:{session.username}",
+                        customer_id=owner,
+                        note="changed via agent console",
+                    )
+                    st.toast("Status updated." if ok else "No change.")
+                    st.rerun()
 
-            events = db.get_events(t["ticket_id"], session.customer_id)
+            events = db.get_events(t["ticket_id"], owner)
             if events:
                 st.markdown("**Audit trail**")
                 for e in events:

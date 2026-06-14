@@ -71,7 +71,8 @@ def _draft(prompt: str, _llm=None) -> str | None:
 _PROMISE_RE = re.compile(
     r"\b(guarantee|promise|personally|manager|refund|compensat|reimburs|waive|"
     r"credit (your|you)|call you|phone you|next (week|day|business day)|tomorrow|"
-    r"by (end of|monday|tuesday|wednesday|thursday|friday)|within \d+\s*(hour|day|business))",
+    r"close of business|\bcob\b|by (the )?end of|by (monday|tuesday|wednesday|thursday|friday)|"
+    r"within (a|an|the|\d+)\s*(hour|day|week|month|business))",
     re.IGNORECASE,
 )
 

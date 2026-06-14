@@ -10,6 +10,14 @@ def test_valid_login_returns_session_with_trusted_id():
     assert sess.customer_name == "Jordan"
 
 
+def test_roles_are_assigned_from_the_directory():
+    # Role is trusted (from auth), and gates privileged actions in the UI.
+    cust = auth.authenticate("jordan", "demo123")
+    assert cust.role == "customer" and cust.is_agent is False
+    agent = auth.authenticate("agent", "demo123")
+    assert agent is not None and agent.role == "agent" and agent.is_agent is True
+
+
 def test_wrong_password_rejected():
     assert auth.authenticate("jordan", "wrong") is None
 

@@ -74,3 +74,52 @@ def test_migrations_are_idempotent():
     v2 = migrations.migrate(conn)  # second run must be a no-op, not an error
     assert v1 == v2 == migrations.CURRENT_VERSION
     conn.close()
+
+
+def test_migration_v1_to_v2_preserves_existing_data():
+    # Apply only v1, insert a row, then migrate to v2 — the row must survive and the
+    # new columns default sensibly (the real upgrade-on-live-data path).
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+    for sql in migrations.MIGRATIONS[0][1]:
+        conn.execute(sql)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+    conn.execute(
+        "INSERT INTO support_tickets (ticket_id, customer_id, issue, status, priority,"
+        " created_at, updated_at) VALUES ('650932','c1','x','Open','normal','t','t')"
+    )
+    conn.commit()
+    assert migrations.migrate(conn) == migrations.CURRENT_VERSION
+    row = conn.execute("SELECT * FROM support_tickets WHERE ticket_id='650932'").fetchone()
+    assert row is not None and row["sla_due_at"] is None and row["sla_breached"] == 0
+    conn.close()
+
+
+def test_migration_crash_recovery_swallows_duplicate_column():
+    # Simulate a partial/interrupted apply: columns already exist but the version
+    # wasn't recorded. Re-running migrate() must NOT crash on "duplicate column".
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    migrations.migrate(conn)                 # fully migrate (columns now exist)
+    conn.execute("DELETE FROM schema_version")  # forget we did it
+    conn.commit()
+    assert migrations.migrate(conn) == migrations.CURRENT_VERSION  # no crash
+    conn.close()
+
+
+def test_create_ticket_fast_fails_on_not_null_violation():
+    # customer_id=None violates NOT NULL — an IntegrityError that is NOT a ticket_id
+    # collision, so create_ticket returns None immediately rather than masking the bug.
+    assert db.create_ticket(customer_id=None, issue="x") is None
+
+
+def test_respond_redacts_pii_into_the_trace():
+    import observability
+    observability.clear()
+    g = G.build_graph(classify_fn=lambda _t: Fake("positive_feedback", 0.95))
+    G.respond("thanks! my email is jordan@example.com", customer_id=DEMO_CUSTOMER_ID,
+              customer_name="Jordan", graph=g)
+    rec = observability.read_recent(1)[0]
+    assert "jordan@example.com" not in rec["message"]
+    assert "[email]" in rec["message"]

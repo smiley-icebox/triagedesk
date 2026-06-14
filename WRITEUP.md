@@ -29,9 +29,9 @@ I built this as a **deterministic workflow with one LLM decision**, the correct
 engineering for a transactional banking flow. The LLM only **classifies** (and drafts
 copy within guardrails); **code routes** from the structured label; and the LLM is
 **fenced out of the data path** — ticket numbers, statuses, and customer identity are
-all owned by code, never by the model. I had a working agent-loop reference on hand
-(NewsGenie, which lets the LLM choose tools via `tools_condition`) and deliberately did
-not copy that shape.
+all owned by code, never by the model. The standard LangGraph *agent* loop (binding
+tools and letting the LLM choose them via `tools_condition`) was the shape I
+deliberately did **not** use — you don't want a model improvising over account data.
 
 **On "multi-agent":** the system *is* multi-agent — five specialized agents (a
 classifier agent plus four handler agents: positive feedback, negative feedback,

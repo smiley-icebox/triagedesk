@@ -29,6 +29,12 @@ def test_extract_ignores_short_numbers():
     assert extract_ticket_id("call 911 if urgent") is None
 
 
+def test_extract_ignores_four_digit_year_or_amount():
+    # Ticket ids are EXACTLY 6 digits — a year/amount must not become a bogus ticket.
+    assert extract_ticket_id("I was charged in 2023") is None
+    assert extract_ticket_id("charged 4500 twice") is None
+
+
 # --- handlers ----------------------------------------------------------------
 def _state(message, **extra):
     base = {"message": message, "customer_id": DEMO_CUSTOMER_ID, "customer_name": "Jordan"}

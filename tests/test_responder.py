@@ -76,3 +76,9 @@ def test_is_safe_rejects_promises_and_timelines():
     assert not responder._is_safe("We'll refund you and a manager will call you.")
     assert not responder._is_safe("We'll resolve this by Friday.")
     assert responder._is_safe("We're sorry, Jordan — the team will follow up shortly.")
+
+
+def test_is_safe_rejects_digit_free_timelines():
+    # Spelled-out commitments the system can't honor, with no digits to catch them.
+    assert not responder._is_safe("We'll have this sorted within the week.")
+    assert not responder._is_safe("This will be resolved by close of business.")

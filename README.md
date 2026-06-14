@@ -1,5 +1,8 @@
 # TriageDesk — Banking Customer Support AI (multi-agent workflow)
 
+[![tests](https://github.com/smiley-icebox/triagedesk/actions/workflows/ci.yml/badge.svg)](https://github.com/smiley-icebox/triagedesk/actions/workflows/ci.yml)
+&nbsp;[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A support-triage system that classifies an incoming customer message, then routes it
 to the right handler: thank the customer for positive feedback, open a tracked ticket
 for a complaint, look up a ticket's status for a query, answer a general banking
@@ -20,26 +23,59 @@ transaction flow, not a compromise.
   a plain function (`route_by_label`) picks the next node. Deterministic, auditable,
   unit-testable without an API call.
 
-Compare this to the sibling **NewsGenie** project, a true agent: there the LLM decides
-which tool to call inside a loop (`NewsGenie/graph.py:66`). Right for open-ended Q&A;
-wrong here — you don't want a model improvising over customer account data.
+Compare this to the **agent** pattern: a typical LangGraph agent binds tools and lets
+the LLM decide which to call inside a loop (`tools_condition`). Right for open-ended
+Q&A; wrong here — you don't want a model improvising over customer account data.
 
 ## Architecture
 
-```
-user message ──► classify (ONE LLM call → {label, confidence, source})
-                   │                 guardrail: injection → human; API down → keyword fallback
-                   ▼  route_by_label  (plain function, deterministic)
-  positive    negative      query          general_query      escalate
-  thank-you   open ticket   read status    RAG over FAQ        human
-  (LLM+       + notify       (scoped to     (grounded, defers   (low
-   guardrail)  + SLA + audit  the customer)  if unknown)         confidence)
-                   │
-        every interaction ──► structured, PII-redacted JSONL trace + metrics
+One LLM call classifies; **code** deterministically routes to one of five agent nodes.
+The LLM is fenced out of the data path entirely.
+
+```mermaid
+flowchart TD
+    M["Customer message"] --> C{"classify<br/>ONE LLM call → label + confidence"}
+    C -->|"injection detected"| H
+    C -->|"confidence &lt; 0.60"| H["escalate → human"]
+    C -->|positive| P["positive<br/>LLM thank-you (guardrailed)"]
+    C -->|negative| N["negative<br/>open ticket · notify · SLA · audit"]
+    C -->|query| Q["query<br/>read status (scoped to customer)"]
+    C -->|general_query| G["general<br/>RAG over FAQ (grounded, or defer)"]
+    P --> T[("PII-masked JSONL trace + metrics")]
+    N --> T
+    Q --> T
+    G --> T
+    H --> T
 ```
 
-If classifier confidence is below threshold (or an injection is detected), the message
-routes to **escalate** — a human — instead of being forced down a happy path.
+`route_by_label` is a plain function reading a structured label — deterministic,
+auditable, and unit-testable without an API call. Below-threshold confidence or a
+detected injection routes to **escalate** (a human) rather than being forced down a
+happy path; if the API is unreachable, classification degrades to a keyword fallback.
+
+## Module map (by layer)
+
+Flat on disk (it's a small app); cleanly layered by responsibility:
+
+| Layer | Modules |
+|------|---------|
+| **Foundation** | `config.py` (model, thresholds, labels, templates, prompt), `llm.py` (Claude client factory + helpers) |
+| **Agents / routing** | `classifier.py`, `graph.py`, `handlers.py`, `responder.py`, `knowledge.py` |
+| **Storage** | `repository.py` (interface + SQLite impl), `migrations.py`, `db.py` (facade) |
+| **Services** | `auth.py`, `notifier.py`, `observability.py` |
+| **Eval / data** | `evaluation.py`, `seed_data.py` |
+| **UI** | `app.py` (Streamlit) |
+
+## Data model
+
+Two tables (`migrations.py`); the audit trail is the production-minded part:
+
+- **`support_tickets`** — `ticket_id` (6-digit PK), `customer_id` (owner; scopes all
+  reads), `customer_name`, `issue`, `status` (enum), `priority`, `created_at`,
+  `updated_at`, `sla_due_at`, `sla_breached`.
+- **`ticket_events`** — an **immutable audit row per change** (`created` / `status_change`)
+  with `from_status` → `to_status`, `actor`, `note`, `created_at`. Written in the *same
+  transaction* as the ticket change, so the history can never drift from the data.
 
 ## What's "real" here (beyond the brief)
 
@@ -97,9 +133,14 @@ cp .env.example .env        # then put your real key in it: ANTHROPIC_API_KEY=sk
 .venv/bin/streamlit run app.py    # launch the dashboard
 ```
 
-Sign in with **jordan / demo123** (owns the sample tickets) or **sam / demo123** (owns
-ticket 940011 — sign in as jordan and query 940011 to see read-scoping). Use the sidebar
+Sign in (all password `demo123`): **jordan** / **sam** (customers — jordan owns the
+sample tickets; query ticket 940011 as jordan to see read-scoping), or **agent** (a
+support agent who sees all tickets and can drive their lifecycle). Use the sidebar
 scenario buttons to exercise each route, including the RAG general-question path.
+
+**No Anthropic key?** Set `USE_LLM_RESPONSES=0` in `.env` and you can still run the
+whole UI — replies fall back to approved templates and RAG answers extractively from
+the FAQ, with no live LLM call. (Live triage classification still needs a key.)
 
 ## Verify
 

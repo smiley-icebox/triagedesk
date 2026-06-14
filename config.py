@@ -3,7 +3,7 @@
 Everything tunable lives here: the model, the routing thresholds, the canonical
 labels/statuses, the customer-facing response templates, and the one prompt that
 drives classification. Keys are read from the environment (loaded from a local
-.env if present) — never hard-coded. Pattern mirrors NewsGenie/config.py.
+.env if present) — never hard-coded.
 
 WHY a dedicated config module: the whole system has exactly ONE place where the
 LLM's behaviour is steered (CLASSIFIER_SYSTEM_PROMPT) and ONE place where the
@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 load_dotenv()  # picks up .env in this folder if present; no-op otherwise
 
 # --- Model -----------------------------------------------------------------
-# Sonnet 4.6 mirrors NewsGenie: strong, cheap/fast, and proven in your prior
-# submission. NOTE (production callout): a small-label classifier does NOT need a
+# Sonnet 4.6: strong tool-use, cheap/fast, a sensible default for this workload.
+# NOTE (production callout): a small-label classifier does NOT need a
 # frontier model — claude-haiku-4-5 would be the cost/latency-correct choice at
 # scale. One-line change; we keep Sonnet here for demo quality + consistency.
 LLM_MODEL = "claude-sonnet-4-6"

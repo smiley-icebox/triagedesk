@@ -19,6 +19,12 @@ def test_redact_keeps_six_digit_ticket_ids():
     assert "650932" in observability.redact("status of ticket 650932?")
 
 
+def test_redact_masks_account_numbers_but_keeps_ticket_id():
+    out = observability.redact("debit from account 12345678 about ticket 650932")
+    assert "12345678" not in out          # 8-digit account masked
+    assert "650932" in out                # 6-digit ticket id preserved
+
+
 def test_record_redacts_before_writing():
     observability.clear()
     rec = observability.record(
