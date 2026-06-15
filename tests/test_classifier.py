@@ -92,3 +92,10 @@ def test_heuristic_word_boundary_no_substring_false_positive():
     # the substring no longer mis-fires (the old substring match would say NEGATIVE).
     r = _heuristic_classify("I run a distillery and want to open an account")
     assert r.label != "negative_feedback"
+
+
+def test_heuristic_howto_question_with_frustration_word_is_general_not_ticket():
+    # Regression guard: an explicit how-to question carrying an incidental frustration
+    # word ("locked") must answer from the KB, NOT auto-open a ticket in degraded mode.
+    r = _heuristic_classify("How do I reset my password? It is locked.")
+    assert r.label == "general_query"

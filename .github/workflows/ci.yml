@@ -14,7 +14,16 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
       - name: Run tests
         # The suite is fully offline — no ANTHROPIC_API_KEY needed (the LLM sits
         # behind injectable seams), so CI runs the whole thing deterministically.
         run: python -m pytest -q
+      - name: Verify test count matches the docs
+        # The README/WRITEUP cite an exact test count; this guards it from drifting
+        # silently. If you add/remove tests, update the number in both docs and here.
+        run: |
+          count=$(python -m pytest --collect-only -q 2>/dev/null | grep -c '::')
+          echo "collected $count tests"
+          [ "$count" -eq 99 ] || { echo "Test count drifted from 99 (docs cite 99)."; exit 1; }

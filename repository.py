@@ -185,12 +185,19 @@ class SQLiteRepository(TicketRepository):
                 # the OPEN time, so a resolved ticket shouldn't keep showing the
                 # warning badge (the flag was otherwise a one-way latch).
                 clear_breach = 1 if new_status == STATUS_RESOLVED else 0
-                conn.execute(
+                # Conditional transition: the UPDATE only fires while the row is STILL at
+                # `from_status` (the value we read). If a concurrent writer changed it
+                # first, rowcount is 0 and we abort WITHOUT writing an audit row — so the
+                # ticket_events chain can never record a from_status we didn't transition
+                # from. (Same race-free discipline as create_ticket's conditional insert.)
+                cur = conn.execute(
                     "UPDATE support_tickets SET status = ?, updated_at = ?, "
                     "sla_breached = CASE WHEN ? = 1 THEN 0 ELSE sla_breached END "
-                    "WHERE ticket_id = ? AND customer_id = ?",
-                    (new_status, ts, clear_breach, ticket_id, customer_id),
+                    "WHERE ticket_id = ? AND customer_id = ? AND status = ?",
+                    (new_status, ts, clear_breach, ticket_id, customer_id, from_status),
                 )
+                if cur.rowcount != 1:
+                    return False  # status changed under us between read and write
                 conn.execute(
                     """INSERT INTO ticket_events
                        (ticket_id, event_type, from_status, to_status, actor, note, created_at)

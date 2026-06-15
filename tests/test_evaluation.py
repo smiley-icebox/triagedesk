@@ -18,8 +18,11 @@ def test_perfect_classifier_scores_100_percent():
 
     report = evaluate(classify_fn=perfect)
     assert report["accuracy"] == 1.0
-    assert report["routing_success_rate"] == 1.0
+    assert report["escalation_adjusted_accuracy"] == 1.0
     assert report["escalation_correct"] == len(ESCALATION_SET)
+    # The ambiguous set (low confidence) must populate the low band — proving the
+    # calibration table can actually reflect the boundary, not just the clean high band.
+    assert report["calibration"]["low (<0.6)"]["total"] >= len(ESCALATION_SET)
 
 
 def test_confusion_matrix_records_mistakes():

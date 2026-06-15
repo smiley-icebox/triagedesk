@@ -297,6 +297,12 @@ with tab_triage:
             st.session_state.history.append(
                 {"role": "assistant", "content": answer, "detail": detail}
             )
+        elif prompt and is_dup:
+            # Suppression must not be silent: tell the user why their repeat didn't run,
+            # and point at the answer that's already on screen (the dedup only guards
+            # against a rapid double-submit opening two tickets).
+            st.toast("Ignored a duplicate of your last message — see the reply above.",
+                     icon="↩️")
 
     # Size the panel to the viewport (so the page doesn't scroll) and pin the view
     # to the newest message. Runs every render, even with an empty chat.

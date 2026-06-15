@@ -1,7 +1,6 @@
 """LLM responder: guardrails + template fallback (offline, via a fake llm)."""
 
 import responder
-from seed_data import DEMO_CUSTOMER_NAME
 
 
 class _FakeLLM:

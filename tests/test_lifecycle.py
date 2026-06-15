@@ -1,5 +1,7 @@
 """Ticket lifecycle + audit trail (the production correctness additions)."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 import db
 from seed_data import DEMO_CUSTOMER_ID, OTHER_CUSTOMER_ID
 
@@ -26,6 +28,28 @@ def test_update_status_moves_and_audits():
     assert events[1]["from_status"] == "Open" and events[1]["to_status"] == "In Progress"
     assert events[2]["to_status"] == "Resolved"
     assert events[1]["actor"] == "agent:jane"
+
+
+def test_concurrent_status_updates_keep_audit_chain_continuous():
+    # Two agents race to move the SAME ticket. The conditional UPDATE (WHERE status =
+    # from_status) means each recorded transition really happened FROM the status it
+    # claims: either they serialize into a valid chain, or a racer's UPDATE matches 0
+    # rows and writes no audit. Either way the chain stays continuous. WITHOUT the guard,
+    # two racers reading 'Open' both write from='Open' -> a broken chain. (M1 regression.)
+    tid = db.create_ticket(customer_id=CID, issue="race")
+
+    def move(to):
+        return db.update_status(tid, to, actor=f"agent:{to}", customer_id=CID)
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        results = list(ex.map(move, ["In Progress", "Resolved"]))
+
+    assert any(results)  # at least one update succeeded
+    changes = [e for e in db.get_events(tid, CID) if e["event_type"] == "status_change"]
+    prev = "Open"  # the status create_ticket starts every ticket at
+    for e in changes:
+        assert e["from_status"] == prev, f"discontinuous audit chain: {e['from_status']} != {prev}"
+        prev = e["to_status"]
 
 
 def test_invalid_status_rejected():

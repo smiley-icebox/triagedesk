@@ -3,9 +3,11 @@
 This file has two halves:
 
   CLASSIFICATION metrics (deterministic) — accuracy on the labeled EVAL_SET, a
-  confusion matrix, routing success rate (does each message reach the route it
-  should?), escalation behaviour on the ambiguous ESCALATION_SET, mean confidence,
-  and per-confidence-bin calibration.
+  confusion matrix, escalation-adjusted accuracy (accuracy AFTER the escalation
+  threshold — equals accuracy on a confident set, diverges once predictions fall below
+  threshold; the conditional-edge wiring itself is exercised in tests/test_routing.py),
+  escalation behaviour on the ambiguous ESCALATION_SET, mean confidence, and a
+  per-confidence-band distribution over BOTH sets.
 
   RESPONSE-QUALITY metrics (LLM-as-judge) — empathy/clarity scoring of generated
   replies. This is a TONE sniff-test, not a correctness gate (see the honest framing
@@ -39,12 +41,16 @@ def evaluate(classify_fn=None) -> dict:
 
     confusion = defaultdict(lambda: defaultdict(int))  # expected -> predicted -> count
     correct = 0
-    routing_hits = 0
+    routed_to_label = 0
     confidences = []
-    # Calibration: bucket each prediction by confidence band and track accuracy, so
-    # we can see whether the 0.60 escalation threshold is actually justified by the
-    # model's self-reported confidence (rather than assumed).
-    bins = {"low (<0.6)": [0, 0], "med (0.6-0.9)": [0, 0], "high (>=0.9)": [0, 0]}
+    # Calibration: bucket EVERY eval message by confidence band. The labeled set should
+    # land high-confidence and accurate; the AMBIGUOUS set (no gold label) should land
+    # low/med so it escalates. Feeding both makes the low/med bands non-empty — otherwise
+    # the table only ever shows the clean high band and can't reveal a mis-calibration.
+    def _band(c):
+        return "high (>=0.9)" if c >= 0.9 else "med (0.6-0.9)" if c >= 0.6 else "low (<0.6)"
+    bins = {b: {"correct": 0, "labeled": 0, "total": 0}
+            for b in ("low (<0.6)", "med (0.6-0.9)", "high (>=0.9)")}
 
     for message, expected in EVAL_SET:
         pred = classify_fn(message)
@@ -52,26 +58,42 @@ def evaluate(classify_fn=None) -> dict:
         confidences.append(pred.confidence)
         hit = pred.label == expected
         correct += hit
-        if _route_for(pred) == expected:  # expected route == expected label here
-            routing_hits += 1
-        band = "high (>=0.9)" if pred.confidence >= 0.9 else "med (0.6-0.9)" if pred.confidence >= 0.6 else "low (<0.6)"
-        bins[band][0] += int(hit)
-        bins[band][1] += 1
+        # Escalation-adjusted accuracy: a below-threshold prediction routes to a human
+        # (ROUTE_ESCALATE), so it counts as a MISS here even if the label was right.
+        # On the all-confident labeled set this equals plain accuracy; it diverges once
+        # low-confidence predictions appear. (The conditional-edge WIRING is exercised
+        # end-to-end separately in tests/test_routing.py — this is a scoring metric.)
+        if _route_for(pred) == expected:
+            routed_to_label += 1
+        b = _band(pred.confidence)
+        bins[b]["correct"] += int(hit)
+        bins[b]["labeled"] += 1
+        bins[b]["total"] += 1
 
-    # Ambiguous/out-of-scope: success = correctly routed to a human.
-    escalation_hits = sum(1 for m in ESCALATION_SET if _route_for(classify_fn(m)) == ROUTE_ESCALATE)
+    # Ambiguous/out-of-scope: success = correctly routed to a human. Also bucket them so
+    # the calibration bands populate where the boundary actually lives.
+    escalation_hits = 0
+    for m in ESCALATION_SET:
+        pred = classify_fn(m)
+        if _route_for(pred) == ROUTE_ESCALATE:
+            escalation_hits += 1
+        bins[_band(pred.confidence)]["total"] += 1
 
     n = len(EVAL_SET)
     return {
         "n": n,
         "accuracy": correct / n if n else 0.0,
-        "routing_success_rate": routing_hits / n if n else 0.0,
+        # accuracy after applying the escalation threshold (NOT a second independent
+        # metric — see comment above and WRITEUP).
+        "escalation_adjusted_accuracy": routed_to_label / n if n else 0.0,
         "mean_confidence": sum(confidences) / len(confidences) if confidences else 0.0,
         "confusion": {k: dict(v) for k, v in confusion.items()},
         "escalation_n": len(ESCALATION_SET),
         "escalation_correct": escalation_hits,
-        "calibration": {b: {"correct": c, "total": t, "accuracy": (c / t if t else 0.0)}
-                        for b, (c, t) in bins.items()},
+        "calibration": {b: {"correct": v["correct"], "labeled": v["labeled"],
+                            "total": v["total"],
+                            "accuracy": (v["correct"] / v["labeled"] if v["labeled"] else None)}
+                        for b, v in bins.items()},
     }
 
 
@@ -164,9 +186,10 @@ def print_report(report: dict) -> None:
     print("TriageDesk — Classification Evaluation")
     print("=" * 60)
     print(f"Test cases:             {report['n']}")
-    print(f"Classification accuracy: {report['accuracy']:.0%}")
-    print(f"Routing success rate:    {report['routing_success_rate']:.0%}")
-    print(f"Mean confidence:         {report['mean_confidence']:.2f}")
+    print(f"Classification accuracy:      {report['accuracy']:.0%}")
+    print(f"Escalation-adjusted accuracy: {report['escalation_adjusted_accuracy']:.0%}"
+          "  (accuracy after the escalation threshold)")
+    print(f"Mean confidence:              {report['mean_confidence']:.2f}")
     print(f"Confidence threshold:    {CONFIDENCE_THRESHOLD:.2f}")
     print()
     print("Confusion matrix (rows = true label, cols = predicted):")
@@ -177,10 +200,11 @@ def print_report(report: dict) -> None:
         cells = " ".join(f"{row.get(pred, 0):>10}" for pred in LABELS)
         print(f"{true_label:>20}  {cells}")
     print()
-    print("Confidence calibration (does the threshold hold up?):")
+    print("Confidence distribution (labeled should land high & accurate; ambiguous low):")
     for band, s in report.get("calibration", {}).items():
-        if s["total"]:
-            print(f"  {band:<16} accuracy {s['accuracy']:.0%}  ({s['correct']}/{s['total']})")
+        acc = f"accuracy {s['accuracy']:.0%} ({s['correct']}/{s['labeled']} labeled)" \
+            if s["accuracy"] is not None else "no labeled cases"
+        print(f"  {band:<16} {s['total']:>2} msgs · {acc}")
     print()
     print(
         f"Escalation (ambiguous/out-of-scope correctly sent to a human): "

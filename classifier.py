@@ -115,6 +115,11 @@ _GENERAL_RE = re.compile(
     r"password|policy|atm|wire|open an)\b",
     re.IGNORECASE,
 )
+# An explicit how-to QUESTION is a knowledge request, not a complaint — even when it
+# carries an incidental frustration word ("How do I reset my password? It is locked.").
+# Narrow to unambiguous how-to phrasing so status queries ("what is my ticket status")
+# are NOT captured here.
+_HOWTO_RE = re.compile(r"\b(how do i|how can i|how do you|how to)\b", re.IGNORECASE)
 
 
 def _heuristic_classify(message: str) -> ClassificationResult:
@@ -126,10 +131,15 @@ def _heuristic_classify(message: str) -> ClassificationResult:
       - Sentiment (both) is checked before the ticket-number branch, so a complaint
         containing a number ("charged 4500 twice and it's wrong") routes to NEGATIVE,
         not a silent status QUERY.
+      - An explicit how-to question is checked before NEGATIVE, so "How do I reset my
+        password? It is locked." answers from the KB instead of auto-opening a ticket
+        off the incidental word "locked".
     Unclear input gets low confidence so it ESCALATES rather than guessing."""
     m = (message or "").lower()
     if _POS_RE.search(m):
         return ClassificationResult(LABEL_POSITIVE, 0.7, "heuristic")
+    if _HOWTO_RE.search(m):
+        return ClassificationResult(LABEL_GENERAL, 0.7, "heuristic")
     if _NEG_RE.search(m):
         return ClassificationResult(LABEL_NEGATIVE, 0.7, "heuristic")
     if _QUERY_RE.search(m) or _NUM_RE.search(m):

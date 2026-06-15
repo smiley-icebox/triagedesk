@@ -37,6 +37,16 @@ def test_query_routes_to_query_handler():
     assert "Resolved" in final["response"]
 
 
+def test_general_query_routes_to_general_handler():
+    # The 4th class: a general banking question reaches the RAG/general handler via the
+    # compiled graph (the one conditional-edge path the suite didn't cover end-to-end).
+    g = _graph_returning("general_query", 0.9)
+    final = respond("what are your wire transfer fees?", customer_id=DEMO_CUSTOMER_ID,
+                    customer_name="Jordan", graph=g)
+    assert final["route"] == "general_query"
+    assert final.get("ticket_id") is None  # a general question never opens a ticket
+
+
 def test_low_confidence_escalates_regardless_of_label():
     # Even a confident-sounding label escalates when confidence is below threshold.
     g = _graph_returning("negative_feedback", 0.10)

@@ -9,6 +9,10 @@ for a complaint, look up a ticket's status for a query, answer a general banking
 question from a knowledge base, or hand off to a human when it isn't sure. Built for
 the Applied GenAI capstone, then extended toward a system you'd actually run.
 
+![TriageDesk: a complaint classified once (label + confidence), then deterministically
+routed to the negative-feedback handler which opens a real 6-digit ticket — with the
+inline routing panel showing label · confidence · route · DB action.](docs/demo-triage.png)
+
 ## The one idea worth taking away
 
 This is a **workflow, not an agent swarm** — and that's the right call for a banking
@@ -119,7 +123,7 @@ Two tables (`migrations.py`); the audit trail is the production-minded part:
 | `evaluation.py` | Classification metrics + LLM-as-judge empathy/clarity scoring. |
 | `seed_data.py` | Sample tickets + the labeled evaluation set. |
 | `app.py` | Streamlit dashboard: login, triage (+ auto-scroll), tickets/lifecycle, debug. |
-| `tests/` | 85 tests — DB, handlers, routing, auth, lifecycle, responder, RAG, eval, integration — no API key needed. |
+| `tests/` | 99 tests — DB, handlers, routing, auth, lifecycle, responder, RAG, eval, integration — no API key needed. |
 
 ## Run it
 
@@ -145,7 +149,7 @@ the FAQ, with no live LLM call. (Live triage classification still needs a key.)
 ## Verify
 
 ```bash
-.venv/bin/python -m pytest          # 85 tests, no API key needed
+.venv/bin/python -m pytest          # 99 tests, no API key needed
 .venv/bin/python evaluation.py      # live: classification metrics + LLM-as-judge quality
 ```
 

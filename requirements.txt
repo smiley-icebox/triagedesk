@@ -15,5 +15,6 @@ pydantic==2.13.4
 streamlit==1.58.0
 python-dotenv==1.2.2
 
-# --- tests ---
+# --- tests + lint ---
 pytest==9.1.0
+ruff==0.15.17

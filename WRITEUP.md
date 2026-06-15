@@ -80,7 +80,7 @@ in a model's discretion.
   ambiguous/out-of-scope messages is **4/4**, and an **LLM-as-judge** scores response
   empathy and clarity (correctly rating the transactional status reply low-empathy and
   the apology high).
-- **85 automated tests pass with no API call** — the LLM sits behind injectable seams,
+- **99 automated tests pass with no API call** — the LLM sits behind injectable seams,
   so guardrails, fallback, routing, lifecycle, auth, RAG, and the judge are all
   verifiable offline.
 - The dashboard makes the workflow visible: per message you see the classification,

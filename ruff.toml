@@ -1,0 +1,6 @@
+# Lint config. Default rule set (pyflakes F + pycodestyle E4/E7/E9) catches what matters
+# — undefined names, unused imports, real style errors — without fighting the wide
+# explanatory comment lines in this codebase.
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv"]

@@ -10,7 +10,7 @@ grew underneath without a rewrite at the call sites.
 Every function here just delegates to the configured repository.
 """
 
-from config import DB_PATH, DEFAULT_PRIORITY  # DB_PATH re-exported for db.DB_PATH callers
+from config import DB_PATH, DEFAULT_PRIORITY  # noqa: F401 (DB_PATH re-exported for db.DB_PATH callers)
 from repository import get_repository
 
 
